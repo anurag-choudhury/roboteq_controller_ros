@@ -26,6 +26,8 @@ find_package(rcutils REQUIRED)
 find_package(roboteq_interfaces REQUIRED)
 find_package(serial REQUIRED)
 find_package(geometry_msgs REQUIRED)
+find_package(nav_msgs REQUIRED)
+
 
 include_directories(include)
 include_directories(/tmp/usr/local/include/)
@@ -33,7 +35,7 @@ include_directories(/tmp/usr/local/include/)
 set(node_plugins "")
 
 add_executable(roboteq_controller_node src/roboteq_controller_node.cpp)
-ament_target_dependencies(roboteq_controller_node rclcpp std_msgs roboteq_interfaces serial geometry_msgs)
+ament_target_dependencies(roboteq_controller_node rclcpp std_msgs roboteq_interfaces serial geometry_msgs nav_msgs)
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)

@@ -216,37 +216,54 @@ void RoboteqDriver::powerCmdCallback(const geometry_msgs::msg::Twist::SharedPtr 
 }
 
 
-void RoboteqDriver::cmdVelCallback(const geometry_msgs::msg::Twist::SharedPtr msg){
-	// wheel speed (m/s)
-	float right_speed = msg->linear.x + track_width_ * msg->angular.z / 2.0;
-	float left_speed  = msg->linear.x - track_width_ * msg->angular.z / 2.0;
-	
-	std::stringstream cmd_str;
+void RoboteqDriver::cmdVelCallback(const geometry_msgs::msg::Twist::SharedPtr msg) {
+    std::stringstream cmd_str;
 
-	if (!closed_loop_){
-		// motor power (scale 0-1000)
-		float right_power = right_speed *1000.0 *60.0/ (wheel_circumference_ * max_rpm_);
-		float left_power  = left_speed  *1000.0 *60.0/ (wheel_circumference_ * max_rpm_);
-		RCLCPP_INFO(this->get_logger(),"[ROBOTEQ] left: %9d right: %9d", (int)left_power, (int)right_power);
-		cmd_str << "!G 1"
-				<< " " << (int)left_power << "_"
-				<< "!G 2"
-				<< " " << (int)right_power << "_";
-	}
-	else{
-		// motor speed (rpm)
-		int32_t right_rpm = gear_reduction_ * right_speed * 60.0 / wheel_circumference_;
-		int32_t left_rpm  = gear_reduction_ * left_speed  * 60.0 / wheel_circumference_;
-		RCLCPP_INFO(this->get_logger(),"[ROBOTEQ] left: %9d right: %9d", left_rpm, right_rpm);
-		cmd_str << "!S 1"
-				<< " " << left_rpm << "_"
-				<< "!S 2"
-				<< " " << right_rpm << "_";
-	}
+    // Calculate right and left speed based on linear and angular velocities
+    float right_speed = msg->linear.x + track_width_ * msg->angular.z / 2.0;
+    float left_speed  = msg->linear.x - track_width_ * msg->angular.z / 2.0;
 
-	ser_.write(cmd_str.str());
-	ser_.flush();
+    if (!closed_loop_) {
+        // Calculate motor power in open-loop (scale 0-1000)
+        float right_power = right_speed * 1000.0 * 60.0 / (wheel_circumference_ * max_rpm_);
+        float left_power  = left_speed * 1000.0 * 60.0 / (wheel_circumference_ * max_rpm_);
+
+        RCLCPP_INFO(this->get_logger(), "[ROBOTEQ] left: %9d right: %9d", (int)left_power, (int)right_power);
+
+        // For linear velocity (move forward/backward), command motor 1 (G1) and stop motor 2 (G2)
+        if (msg->linear.x != 0) {
+            cmd_str << "!G 1" << " " << (int)left_power << "_";  // Command for motor 1 (linear velocity)
+            cmd_str << "!G 2" << " 0\r";  // Stop motor 2 (angular velocity set to 0)
+        }
+        // For angular velocity (turning), command motor 2 (G2) and stop motor 1 (G1)
+        else if (msg->angular.z != 0) {
+            cmd_str << "!G 1" << " 0\r";  // Stop motor 1 (linear velocity set to 0)
+            cmd_str << "!G 2" << " " << (int)right_power << "_";  // Command for motor 2 (angular velocity)
+        }
+    } else {
+        // Calculate motor RPM in closed-loop (rpm)
+        int32_t right_rpm = gear_reduction_ * right_speed * 60.0 / wheel_circumference_;
+        int32_t left_rpm  = gear_reduction_ * left_speed * 60.0 / wheel_circumference_;
+
+        RCLCPP_INFO(this->get_logger(), "[ROBOTEQ] left: %9d right: %9d", left_rpm, right_rpm);
+
+        // For linear velocity (move forward/backward), command motor 1 (G1) and stop motor 2 (G2)
+        if (msg->linear.x != 0) {
+            cmd_str << "!G 1" << " " << left_rpm << "_";  // Command for motor 1 (linear velocity)
+            cmd_str << "!G 2" << " 0\r";  // Stop motor 2 (angular velocity set to 0)
+        }
+        // For angular velocity (turning), command motor 2 (G2) and stop motor 1 (G1)
+        else if (msg->angular.z != 0) {
+            cmd_str << "!G 1" << " 0\r";  // Stop motor 1 (linear velocity set to 0)
+            cmd_str << "!G 2" << " " << right_rpm << "_";  // Command for motor 2 (angular velocity)
+        }
+    }
+
+    // Send the constructed command string to the serial port
+    ser_.write(cmd_str.str());
+    ser_.flush();
 }
+
 
 
 
