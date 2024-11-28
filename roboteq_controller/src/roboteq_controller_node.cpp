@@ -143,34 +143,45 @@ RoboteqDriver::RoboteqDriver(const rclcpp::NodeOptions &options): Node("roboteq_
 
 
 void RoboteqDriver::cmdSetup(){
-	// stop motors
-	ser_.write("!G 1 0\r");
-	ser_.write("!G 2 0\r");
-	ser_.write("!S 1 0\r");
-	ser_.write("!S 2 0\r");
-	ser_.flush();
+    // stop motors
+    std::string stop_motor_1 = "!G 1 0\r";
+    std::string stop_motor_2 = "!G 2 0\r";
+    std::string stop_motor_s1 = "!S 1 0\r";
+    std::string stop_motor_s2 = "!S 2 0\r";
+    RCLCPP_INFO(this->get_logger(), "[RoboteQ] Writing to serial: %s", stop_motor_1.c_str());
+    RCLCPP_INFO(this->get_logger(), "[RoboteQ] Writing to serial: %s", stop_motor_2.c_str());
+    RCLCPP_INFO(this->get_logger(), "[RoboteQ] Writing to serial: %s", stop_motor_s1.c_str());
+    RCLCPP_INFO(this->get_logger(), "[RoboteQ] Writing to serial: %s", stop_motor_s2.c_str());
+    ser_.write(stop_motor_1);
+    ser_.write(stop_motor_2);
+    ser_.write(stop_motor_s1);
+    ser_.write(stop_motor_s2);
+    ser_.flush();
 
-	// // disable echo
-	// ser.write("^ECHOF 1\r");
-	// ser.flush();
+    // enable watchdog timer (1000 ms) to stop if no connection
+    std::string watchdog = "^RWD 1000\r";
+    RCLCPP_INFO(this->get_logger(), "[RoboteQ] Writing to serial: %s", watchdog.c_str());
+    ser_.write(watchdog);
 
-	// enable watchdog timer (1000 ms) to stop if no connection
-	ser_.write("^RWD 1000\r");
-
-	// set motor operating mode (1 for closed-loop speed)
-	if (!closed_loop_){
-		// open-loop speed mode
-		ser_.write("^MMOD 1 0\r");
-		ser_.write("^MMOD 2 0\r");
-		ser_.flush();
-	}
-	else{
-		// closed-loop speed mode
-		ser_.write("^MMOD 1 1\r");
-		ser_.write("^MMOD 2 1\r");
-		ser_.flush();
-	}
+    // set motor operating mode (1 for closed-loop speed)
+    if (!closed_loop_){
+        std::string open_loop_motor_1 = "^MMOD 1 0\r";
+        std::string open_loop_motor_2 = "^MMOD 2 0\r";
+        RCLCPP_INFO(this->get_logger(), "[RoboteQ] Writing to serial: %s", open_loop_motor_1.c_str());
+        RCLCPP_INFO(this->get_logger(), "[RoboteQ] Writing to serial: %s", open_loop_motor_2.c_str());
+        ser_.write(open_loop_motor_1);
+        ser_.write(open_loop_motor_2);
+    } else {
+        std::string closed_loop_motor_1 = "^MMOD 1 1\r";
+        std::string closed_loop_motor_2 = "^MMOD 2 1\r";
+        RCLCPP_INFO(this->get_logger(), "[RoboteQ] Writing to serial: %s", closed_loop_motor_1.c_str());
+        RCLCPP_INFO(this->get_logger(), "[RoboteQ] Writing to serial: %s", closed_loop_motor_2.c_str());
+        ser_.write(closed_loop_motor_1);
+        ser_.write(closed_loop_motor_2);
+    }
+    ser_.flush();
 }
+
 
 
 void RoboteqDriver::run(){
@@ -197,24 +208,26 @@ void RoboteqDriver::run(){
 
 
 void RoboteqDriver::powerCmdCallback(const geometry_msgs::msg::Twist::SharedPtr msg){
-	std::stringstream cmd_str;
-	if (closed_loop_){
-		cmd_str << "!S 1"
-				<< " " << msg->linear.x << "_"
-				<< "!S 2"
-				<< " " << msg->angular.z << "_";
-	}
-	else{
-		cmd_str << "!G 1"
-				<< " " << msg->linear.x << "_"
-				<< "!G 2"
-				<< " " << msg->angular.z << "_";
-	}
-	ser_.write(cmd_str.str());
-	ser_.flush();
-	RCLCPP_INFO(this->get_logger(),"[ROBOTEQ] left: %9.3f right: %9.3f", msg->linear.x, msg->angular.z);
-}
+    std::stringstream cmd_str;
+    if (closed_loop_){
+        cmd_str << "!G 1"
+                << " " << msg->linear.x << "_"
+                << "!G 2"
+                << " " << msg->angular.z << "_";
+    }
+    else{
+        cmd_str << "!G 1"
+                << " " << msg->linear.x << "_"
+                << "!G 2"
+                << " " << msg->angular.z << "_";
+    }
 
+    std::string cmd = cmd_str.str();
+    RCLCPP_INFO(this->get_logger(), "[RoboteQ] Writing to serial: %s", cmd.c_str());
+    ser_.write(cmd);
+    ser_.flush();
+    RCLCPP_INFO(this->get_logger(), "[ROBOTEQ] left: %9.3f right: %9.3f", msg->linear.x, msg->angular.z);
+}
 
 void RoboteqDriver::cmdVelCallback(const geometry_msgs::msg::Twist::SharedPtr msg) {
     std::stringstream cmd_str;
@@ -222,11 +235,19 @@ void RoboteqDriver::cmdVelCallback(const geometry_msgs::msg::Twist::SharedPtr ms
     // Calculate right and left speed based on linear and angular velocities
     float right_speed = msg->linear.x + track_width_ * msg->angular.z / 2.0;
     float left_speed  = msg->linear.x - track_width_ * msg->angular.z / 2.0;
-
+    // Check if both speeds are zero to stop the motor
+    if (msg->linear.x == 0.0 && msg->angular.z == 0.0) {
+        // Stop both motors
+        std::string stop_cmd = "!G 1 0\r!G 2 0\r";
+        RCLCPP_INFO(this->get_logger(), "[RoboteQ] Stopping motors");
+        ser_.write(stop_cmd);
+        ser_.flush();
+        return;
+    }
     if (!closed_loop_) {
         // Calculate motor power in open-loop (scale 0-1000)
-        float right_power = right_speed * 1000.0 * 60.0 / (wheel_circumference_ * max_rpm_);
-        float left_power  = left_speed * 1000.0 * 60.0 / (wheel_circumference_ * max_rpm_);
+        float right_power = right_speed * 500.0 * 60.0 / (wheel_circumference_ * max_rpm_);
+        float left_power  = left_speed * 80.0 * 60.0 / (wheel_circumference_ * max_rpm_);
 
         RCLCPP_INFO(this->get_logger(), "[ROBOTEQ] left: %9d right: %9d", (int)left_power, (int)right_power);
 
@@ -242,7 +263,7 @@ void RoboteqDriver::cmdVelCallback(const geometry_msgs::msg::Twist::SharedPtr ms
         }
     } else {
         // Calculate motor RPM in closed-loop (rpm)
-        int32_t right_rpm = gear_reduction_ * right_speed * 60.0 / wheel_circumference_;
+        int32_t right_rpm = - gear_reduction_ * right_speed * 60.0 / wheel_circumference_;
         int32_t left_rpm  = gear_reduction_ * left_speed * 60.0 / wheel_circumference_;
 
         RCLCPP_INFO(this->get_logger(), "[ROBOTEQ] left: %9d right: %9d", left_rpm, right_rpm);
@@ -263,7 +284,6 @@ void RoboteqDriver::cmdVelCallback(const geometry_msgs::msg::Twist::SharedPtr ms
     ser_.write(cmd_str.str());
     ser_.flush();
 }
-
 
 
 
@@ -308,75 +328,77 @@ void RoboteqDriver::initializeServices(){
 
 
 void RoboteqDriver::queryCallback(){
-	auto current_time = this->now();
-	if (ser_.available()){
-		std_msgs::msg::String result;
+    auto current_time = this->now();
+    if (ser_.available()) {
+        std_msgs::msg::String result;
+        
+        // Lock to prevent concurrent access to serial communication
+        std::lock_guard<std::mutex> lock(locker);
+        
+        // Read available data from the serial port
+        result.data = ser_.read(ser_.available());
 
-		std::lock_guard<std::mutex> lock(locker);
+        // Check if result.data is not empty
+        if (result.data.empty()) {
+            RCLCPP_WARN_STREAM(this->get_logger(), tag << "No data received from serial port.");
+            return; // Skip processing if no data is received
+        }
 
-		result.data = ser_.read(ser_.available());
+        // Publish the raw serial data for debugging
+        serial_read_pub_->publish(result);
 
-		// std::lock_guard<std::mutex> unlock(locker);
+        // Clean the received data
+        boost::replace_all(result.data, "\r", "");
+        boost::replace_all(result.data, "+", "");
 
-		serial_read_pub_->publish(result);
-		
-		boost::replace_all(result.data, "\r", "");
-		boost::replace_all(result.data, "+", "");
+        // Split the data by the delimiter "D"
+        std::vector<std::string> fields;
+        boost::split(fields, result.data, boost::algorithm::is_any_of("D"));
 
-		std::vector<std::string> fields;
-		
-		boost::split(fields, result.data, boost::algorithm::is_any_of("D"));
-		if (fields.size() < 2){
+        // Check if the fields vector has at least 2 elements
+        if (fields.size() < 2) {
+            RCLCPP_ERROR_STREAM(this->get_logger(), tag << "Empty data:{" << result.data << "}");
+        } else {
+            std::vector<std::string> fields_H;
+            for (int i = fields.size() - 1; i >= 0; i--) {
+                if (fields[i][0] == 'H') {
+                    try {
+                        fields_H.clear();
+                        boost::split(fields_H, fields[i], boost::algorithm::is_any_of("?"));
+                        if (fields_H.size() >= query_pub_.size() + 1) {
+                            break;
+                        }
+                    } catch (const std::exception &e) {
+                        RCLCPP_ERROR_STREAM(this->get_logger(), tag << "Error parsing query output: " << fields[i]);
+                        continue;
+                    }
+                }
+            }
 
-			RCLCPP_ERROR_STREAM(this->get_logger(),tag << "Empty data:{" << result.data << "}");
-		}
-		else if (fields.size() >= 2){
-			std::vector<std::string> fields_H;
-			for (int i = fields.size() - 1; i >= 0; i--){
-				if (fields[i][0] == 'H'){
-					try{
-						fields_H.clear();
-						boost::split(fields_H, fields[i], boost::algorithm::is_any_of("?"));
-						if ( fields_H.size() >= query_pub_.size() + 1){
-							break;
-						}
-					}
-					catch (const std::exception &e){
-						std::cerr << e.what() << '\n';
-						RCLCPP_ERROR_STREAM(this->get_logger(),tag << "Finding query output in :" << fields[i]);
-						continue;
-					}
-				}
-			}
+            if (!fields_H.empty() && fields_H[0] == "H") {
+                for (long unsigned int i = 0; i < fields_H.size() - 1; ++i) {
+                    std::vector<std::string> sub_fields_H;
+                    boost::split(sub_fields_H, fields_H[i + 1], boost::algorithm::is_any_of(":"));
+                    
+                    roboteq_interfaces::msg::ChannelValues msg;
+                    msg.header.stamp = current_time;
 
-			if (fields_H.size() > 0 && fields_H[0] == "H"){
-				for (long unsigned int i = 0; i < fields_H.size() - 1; ++i){
-					std::vector<std::string> sub_fields_H;
-					boost::split(sub_fields_H, fields_H[i + 1], boost::algorithm::is_any_of(":"));
-					
-					roboteq_interfaces::msg::ChannelValues msg;
-					msg.header.stamp = current_time;
-
-					for (long unsigned int j = 0; j < sub_fields_H.size(); j++){
-						try{
-							msg.value.push_back(boost::lexical_cast<int>(sub_fields_H[j]));
-						}
-						catch (const std::exception &e){
-							RCLCPP_ERROR_STREAM(this->get_logger(),tag << "Garbage data on Serial");
-							RCLCPP_ERROR_STREAM(this->get_logger(), result.data);
-							RCLCPP_ERROR_STREAM(this->get_logger(), e.what());
-							std::cerr << e.what() << '\n';
-						}
-					}
-					query_pub_[i]->publish(msg);
-				}
-			}
-		}
-		else{
-			RCLCPP_WARN_STREAM(this->get_logger(),tag << "Unknown:{" << result.data << "}");
-		}
-	}
+                    // Convert sub_fields_H to integers and publish the message
+                    for (long unsigned int j = 0; j < sub_fields_H.size(); j++) {
+                        try {
+                            msg.value.push_back(boost::lexical_cast<int>(sub_fields_H[j]));
+                        } catch (const std::exception &e) {
+                            RCLCPP_ERROR_STREAM(this->get_logger(), tag << "Invalid data on Serial: " << result.data);
+                            RCLCPP_ERROR_STREAM(this->get_logger(), e.what());
+                        }
+                    }
+                    query_pub_[i]->publish(msg);
+                }
+            }
+        }
+    }
 }
+
 
 
 int main(int argc, char * argv[])
